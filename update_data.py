@@ -73,7 +73,7 @@ def download(path, progress=print):
             raise UpdateError('Official resource redirects outside the approved public download. Stopped for review.')
         progress('Connecting to the official public Dubai Pulse unit CSV…')
         command = [shutil.which('curl') or '/usr/bin/curl', '--disable', '--silent', '--show-error',
-                   '--proto', '=https', '--connect-timeout', '20', '--max-time', '1800',
+                   '--proto', '=https', '--connect-timeout', '120', '--max-time', '1800',
                    '--speed-limit', '1024', '--speed-time', '60', '--max-filesize', str(MAX_BYTES),
                    '--dump-header', str(headers_path), '--output', str(path), '--write-out', '%{http_code}', url]
         try:
