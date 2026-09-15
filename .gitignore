@@ -1,0 +1,10 @@
+data/*
+!data/.gitkeep
+__pycache__/
+*.pyc
+.env
+.DS_Store
+cloud-output/
+cloud-job.zip
+
+.tools/

@@ -1,0 +1,20 @@
+{
+  "url": "https://www.propertyfinder.ae/en/plp/rent/apartment-for-rent-dubai-jumeirah-village-triangle-district-4-seslia-tower-144614023.html",
+  "provenance": "Public listing page read for the user's requested one-off test on 2026-09-15; not independently verified DLD identity.",
+  "observed": {
+    "building": "Seslia Tower",
+    "community": "Jumeirah Village Triangle",
+    "district": "District 4",
+    "regulatory_zone": "Al Barsha South Fifth",
+    "bedrooms": "Studio",
+    "size_sqft": 397,
+    "annual_rent_aed": 45000
+  },
+  "facts": {
+    "building": "Seslia Tower",
+    "project": "Seslia Tower",
+    "bedrooms": 0,
+    "size_sqm": 36.88250688
+  },
+  "search_note": "Initial candidate retrieval uses the stated project/building name across official areas to avoid assuming the marketing community equals the DLD area. Results remain possible matches. No unit number, floor or DLD property ID was supplied."
+}
