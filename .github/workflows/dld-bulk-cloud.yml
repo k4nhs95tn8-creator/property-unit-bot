@@ -1,5 +1,8 @@
 name: Weekly official DLD unit database
 on:
+  push:
+    paths:
+      - .github/workflows/dld-bulk-cloud.yml
   workflow_dispatch:
   schedule:
     - cron: '0 3 * * 0'
