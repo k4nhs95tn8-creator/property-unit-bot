@@ -145,6 +145,21 @@ class PipelineTests(unittest.TestCase):
         result = f.analyze(advert(), self.db, permit_payload=p)
         self.assertEqual(result['identity']['status'], 'not_established')
 
+    def test_conflicting_advert_unit_disclosures_do_not_identify_property(self):
+        p = advert()
+        p['extracted_property_data']['description'] = 'Unit Number: 1001\\nUnit Number: 1101'
+        r = f.analyze(p, self.db)
+        self.assertEqual(r['identity']['status'], 'not_established')
+        self.assertIsNone(r['advert'].get('unit_disclosure'))
+
+    def test_one_explicit_unit_disclosure_remains_source_claim(self):
+        p = advert()
+        p['extracted_property_data']['description'] = 'Unit Number: 1001'
+        r = f.analyze(p, self.db)
+        self.assertEqual(r['identity']['status'], 'advert_self_disclosure')
+        self.assertEqual(r['identity']['unit'], '1001')
+        self.assertNotEqual(r['final_status'], 'verified_exact')
+
     def test_one_candidate_is_still_not_verified(self):
         with sqlite3.connect(self.db) as db:
             db.execute("DELETE FROM units WHERE property_id <> '101'")
