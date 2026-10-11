@@ -73,6 +73,8 @@ def inspect_capture(capture, advert_guid, *, expected_permit=None,
         return {'status': 'missing_nonpersonal_reference'}
     timestamp = _capture_date(capture.get('captured_at'))
     current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        return {'status': 'invalid_clock_timezone'}
     if timestamp is None or timestamp > current:
         return {'status': 'invalid_capture_time'}
     request = capture.get('request')
@@ -112,8 +114,14 @@ def inspect_capture(capture, advert_guid, *, expected_permit=None,
     property_data = item.get('property')
     if not isinstance(property_data, dict):
         return {'status': 'no_property_data'}
-    if _text(property_data.get('listingType')) not in {'Unit', 'unit'}:
+    if (_text(property_data.get('listingType')) or '').casefold() != 'unit':
         return {'status': 'not_unit_level_permit'}
+    declared_type = _text(request.get('permitType'))
+    property_type = _text(property_data.get('permitType'))
+    if not declared_type:
+        return {'status': 'missing_permit_type'}
+    if property_type and declared_type.casefold() != property_type.casefold():
+        return {'status': 'permit_type_conflict'}
     unit_number = _text(property_data.get('unitNumber'))
     if not unit_number or not re.fullmatch(r'[A-Za-z0-9/-]{1,30}', unit_number):
         return {'status': 'no_explicit_unit_number'}
@@ -126,6 +134,7 @@ def inspect_capture(capture, advert_guid, *, expected_permit=None,
         'upstream_property_id': upstream_id,
         'upstream_namespace': 'pf_compliance_property_id_unproven_dld_equivalence',
         'permit_number': permit_number,
+        'permit_type': declared_type,
         'license_number': license_number,
         'listing_guid': advert_guid,
         'reference': reference,
