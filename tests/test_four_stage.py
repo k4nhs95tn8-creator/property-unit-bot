@@ -77,6 +77,32 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn('owner', json.dumps(p))
         self.assertNotIn('private@example.com', json.dumps(p))
 
+    def test_project_only_registry_cannot_certify_source_claimed_unit(self):
+        # The baseline fixture has project but no registered building.
+        result = f.analyze(advert(), self.db, permit_payload=permit(unit='1001'))
+        self.assertEqual(result['identity']['status'], 'not_established')
+        self.assertEqual(result['final_status'], 'unresolved')
+
+    def test_two_towers_share_project_and_unit_number(self):
+        with sqlite3.connect(self.db) as db:
+            db.execute('DELETE FROM units')
+            for pid, building in [('101', 'Tower A'), ('102', 'Tower B')]:
+                row = dict(property_id=pid, unit='1001', area='Al Barsha South Fifth',
+                           project='Demo Project', building=building,
+                           size_sqm=100.0, bedrooms=2)
+                db.execute('INSERT INTO units VALUES (?,?,?,?,?)',
+                           (f.norm(row['area']), f.norm(building), pid,
+                            json.dumps(row), f.norm('Demo Project')))
+        ad = {'url': URL, 'project': 'Demo Project', 'building': 'Tower A',
+              'area': 'Al Barsha South Fifth', 'bedrooms': 2, 'size_sqm': 100,
+              'permit_guid': GUID, 'unit_disclosure': '1001'}
+        result = f.analyze(ad, self.db)
+        self.assertEqual(result['identity']['status'], 'advert_self_disclosure')
+        self.assertEqual(result['identity']['property_id'], '101')
+        ad['building'] = None
+        no_tower = f.analyze(ad, self.db)
+        self.assertEqual(no_tower['identity']['status'], 'not_established')
+
     def test_four_stages_abstain_on_same_size_rivals(self):
         r = f.analyze(advert(), self.db, permit_payload=permit(), cache_path=self.cache)
         self.assertEqual(r['registry']['count'], 3)
