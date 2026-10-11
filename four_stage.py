@@ -436,9 +436,10 @@ def _registry_records(db_path, ad, permit, permit_correlation):
             snapshot = json.loads(meta['value'])
             sql = "SELECT record FROM units WHERE ((building<>'' AND building=?) OR (project<>'' AND project=?))"
             params = [building, project]
-            if area:
-                sql += " AND (area=? OR area='')"
-                params.append(area)
+            # Advertising-area labels are not a registered DLD unit identifier.
+            # Bayut and Property Finder may report a neighbourhood where DLD
+            # records the regulatory zone. Do not silently eliminate a valid unit.
+            # Exact permitted property IDs still need independent corroboration.
             sql += ' LIMIT ?'
             params.append(MAX_CANDIDATES + 1)
             rows = [json.loads(row['record']) for row in db.execute(sql, params)]
@@ -482,7 +483,9 @@ def _registry_records(db_path, ad, permit, permit_correlation):
             'candidates': candidates, 'retained_candidates': retained_candidates,
             'count': len(candidates), 'retained_count': len(retained_candidates),
             'area_discrepancy_count': area_discrepancy_count,
-            'scope': scope, 'records_examined': len(records), 'snapshot': {
+            'scope': scope, 'records_examined': len(records),
+            'area_filter': 'not_applied_advert_and_dld_zone_names_can_differ',
+            'snapshot': {
                 'source': snapshot.get('source'), 'as_of': snapshot.get('as_of'), 'rows': snapshot.get('rows'),
                 'coverage': snapshot.get('coverage')}}
 
@@ -537,6 +540,8 @@ def _identity_from_crosswalk(ad, permit, registry, crosswalk_path, db_path):
     if len(compatible) != 1:
         return {'status': 'not_established', 'reason': 'Crosswalk does not identify one compatible registry record.'}
     row = compatible[0]
+    if permit and permit.get('area') and row.get('area') and norm(row['area']) != norm(permit['area']):
+        return {'status': 'not_established', 'reason': 'Permit registered zone conflicts with selected DLD unit.'}
     if not _registry_id_unambiguous(db_path, link['property_id'], row.get('unit')):
         return {'status': 'not_established', 'reason': 'DLD property ID is ambiguous in the snapshot.'}
     if permit:
@@ -573,6 +578,8 @@ def _identity_from_permit(permit, correlation, registry, db_path):
     if len(matching) != 1:
         return {'status': 'not_established', 'reason': 'Permit property number does not match a unique compatible registry row.'}
     row = matching[0]
+    if permit.get('area') and row.get('area') and norm(row['area']) != norm(permit['area']):
+        return {'status': 'not_established', 'reason': 'Permit zone conflicts with registered DLD unit.'}
     if pid and not _registry_id_unambiguous(db_path, pid, row.get('unit')):
         return {'status': 'not_established', 'reason': 'Permit property ID not unique in registry.'}
     if permit.get('floor') and str(row.get('floor', '')) != str(permit['floor']):
