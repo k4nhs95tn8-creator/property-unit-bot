@@ -81,7 +81,7 @@ def import_claims(csv_path, db_path):
     """Atomic import of narrowly scoped, authorised, non-personal identity claims."""
     with open(csv_path, encoding='utf-8-sig', newline='') as fh:
         reader = csv.DictReader(fh)
-        if not reader.fieldnames or set(reader.fieldnames) != set(FIELDS):
+        if not reader.fieldnames or set(reader.fieldnames) != set(FIELDS) or len(reader.fieldnames) != len(FIELDS):
             raise ValueError('Unexpected CSV columns (do not add owner details).')
         claims = [validate_claim(x) for x in reader]
     if not claims:
@@ -89,7 +89,9 @@ def import_claims(csv_path, db_path):
     key_to_identity = {}
     for row in claims:
         key = (row['listing_url'], row['listing_guid'])
-        value = (row['property_id'], normalize(row['unit_number']))
+        value = (row['property_id'], normalize(row['unit_number']),
+                 normalize(row['building']), normalize(row['area']),
+                 normalize(row['land_number']))
         if key in key_to_identity and key_to_identity[key] != value:
             raise ValueError('Conflicting unit identity claims for one URL/GUID.')
         key_to_identity[key] = value
@@ -106,9 +108,13 @@ def import_claims(csv_path, db_path):
             observed_date TEXT NOT NULL, authorised_for_lookup TEXT NOT NULL,
             UNIQUE(listing_url, listing_guid, evidence_reference))''')
         for row in claims:
-            previous = db.execute('SELECT DISTINCT property_id, unit_number FROM claims WHERE listing_url=? AND listing_guid=?',
+            previous = db.execute('SELECT DISTINCT property_id, unit_number, building, area, land_number FROM claims WHERE listing_url=? AND listing_guid=?',
                                   (row['listing_url'], row['listing_guid'])).fetchall()
-            if previous and any((p, normalize(u)) != (row['property_id'], normalize(row['unit_number'])) for p, u in previous):
+            expected = (row['property_id'], normalize(row['unit_number']),
+                        normalize(row['building']), normalize(row['area']),
+                        normalize(row['land_number']))
+            if previous and any((p, normalize(u), normalize(b), normalize(a), normalize(land)) != expected
+                                for p, u, b, a, land in previous):
                 raise ValueError('Existing evidence conflicts; no claims imported.')
         db.executemany('''INSERT OR IGNORE INTO claims VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
                        ([row[k] for k in FIELDS] for row in claims))
@@ -130,10 +136,14 @@ def lookup_claim(listing_url, claim_db_path, registry_db_path):
             return {'status': 'evidence_store_invalid'}
     if not rows:
         return {'status': 'no_authorised_document_link'}
-    identities = {(r[1], normalize(r[2])) for r in rows}
+    identities = {(r[1], normalize(r[2]), normalize(r[3]),
+                   normalize(r[4]), normalize(r[5])) for r in rows}
     guids = {r[0] for r in rows}
     if len(identities) != 1 or len(guids) != 1:
         return {'status': 'conflicting_document_claims'}
+    # Pick the most recently observed compatible document for attribution.
+    # This does NOT prove the property's ownership or the advert is still live.
+    rows.sort(key=lambda r: r[8], reverse=True)
     if not Path(registry_db_path).is_file():
         return {'status': 'registry_not_available'}
     with sqlite3.connect('file:' + Path(registry_db_path).resolve().as_posix() + '?mode=ro', uri=True) as db:
@@ -161,7 +171,8 @@ def lookup_claim(listing_url, claim_db_path, registry_db_path):
     return {
         'status': 'document_claim_registry_corroborated',
         'unit_number': expected[2], 'dld_property_id': expected[1],
-        'listing_guid': expected[0], 'evidence_type': expected[6],
+        'listing_guid': expected[0], 'building': expected[3], 'area': expected[4],
+        'land_number': expected[5], 'evidence_type': expected[6],
         'evidence_reference': expected[7], 'observed_date': expected[8],
         'notice': 'Attributable document claim, matching local DLD registry. Not independently proven current advert identity or current ownership.'
     }
