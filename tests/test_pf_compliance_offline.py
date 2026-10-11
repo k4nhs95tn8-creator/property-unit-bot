@@ -61,6 +61,23 @@ class OfflineComplianceTests(unittest.TestCase):
         self.assertEqual(inspect_capture(r, GUID, now=self.now)['status'],
                          'ambiguous_matching_validation_guid')
 
+    def test_missing_permit_type_rejected(self):
+        c = capture()
+        del c['request']['permitType']
+        self.assertEqual(inspect_capture(c, GUID, now=self.now)['status'],
+                         'missing_permit_type')
+
+    def test_property_permit_type_conflict_rejected(self):
+        c = capture()
+        c['response']['data'][0]['property']['permitType'] = 'sale'
+        self.assertEqual(inspect_capture(c, GUID, now=self.now)['status'],
+                         'permit_type_conflict')
+
+    def test_naive_clock_rejected(self):
+        self.assertEqual(
+            inspect_capture(capture(), GUID, now=datetime(2026, 10, 11, 12))['status'],
+            'invalid_clock_timezone')
+
     def test_never_leaks_owner_fields(self):
         r = capture()
         r['response']['data'][0]['property']['owner'] = {
