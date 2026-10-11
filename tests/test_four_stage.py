@@ -87,6 +87,49 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn('exact unit identified', f.message(r).lower())
         self.assertNotIn('private@example.com', json.dumps(r))
 
+    def test_area_mismatch_preserved_as_unverified_retained_rival(self):
+        # Simulate a newer registry revision where a real unit's area has
+        # changed materially. No unit identity is supplied to the resolver.
+        with sqlite3.connect(self.db) as db:
+            record = dict(json.loads(db.execute(
+                "SELECT record FROM units WHERE property_id='101'").fetchone()[0]))
+            record['size_sqm'] = 95.0
+            db.execute("UPDATE units SET record=? WHERE property_id='101'",
+                       (json.dumps(record),))
+        report = f.analyze(advert(), self.db, permit_payload=permit())
+        self.assertEqual(report['registry']['count'], 2)
+        self.assertEqual(report['registry']['retained_count'], 3)
+        self.assertEqual(report['registry']['area_discrepancy_count'], 1)
+        self.assertIn('101', [r['property_id'] for r in report['registry']['top_retained_area_alternatives']])
+        self.assertEqual(report['identity']['status'], 'not_established')
+        self.assertEqual(report['final_status'], 'unresolved')
+        self.assertIn('Area discrepancy:', f.message(report))
+
+    def test_conflicting_area_still_allows_explicit_permit_claim_as_unverified(self):
+        with sqlite3.connect(self.db) as db:
+            record = dict(json.loads(db.execute(
+                "SELECT record FROM units WHERE property_id='101'").fetchone()[0]))
+            record['size_sqm'] = 95.0
+            db.execute("UPDATE units SET record=? WHERE property_id='101'",
+                       (json.dumps(record),))
+        result = f.analyze(advert(), self.db, permit_payload=permit(unit='1001'))
+        self.assertEqual(result['identity']['status'], 'permit_record_claim')
+        self.assertEqual(result['identity']['property_id'], '101')
+        self.assertEqual(result['registry']['retained_count'], 3)
+        self.assertFalse(result['deployment_ready'])
+        self.assertNotEqual(result['final_status'], 'verified_exact')
+
+    def test_still_refuses_wrong_property_when_area_mismatch_exists(self):
+        with sqlite3.connect(self.db) as db:
+            record = dict(json.loads(db.execute(
+                "SELECT record FROM units WHERE property_id='101'").fetchone()[0]))
+            record['size_sqm'] = 95.0
+            db.execute("UPDATE units SET record=? WHERE property_id='101'",
+                       (json.dumps(record),))
+        result = f.analyze(advert(), self.db, permit_payload=permit(unit='9999'))
+        self.assertEqual(result['identity']['status'], 'not_established')
+        self.assertEqual(result['final_status'], 'unresolved')
+
     def test_one_candidate_is_still_not_verified(self):
         with sqlite3.connect(self.db) as db:
             db.execute("DELETE FROM units WHERE property_id <> '101'")
