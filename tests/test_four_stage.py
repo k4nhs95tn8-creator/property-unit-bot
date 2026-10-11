@@ -102,7 +102,7 @@ class PipelineTests(unittest.TestCase):
                             json.dumps(row), f.norm('Demo Project')))
         ad = {'url': URL, 'project': 'Demo Project', 'building': 'Tower A',
               'area': 'Al Barsha South Fifth', 'bedrooms': 2, 'size_sqm': 100,
-              'permit_guid': GUID, 'unit_disclosure': '1001'}
+              'permit_guid': GUID, 'description': 'Unit Number: 1001'}
         result = f.analyze(ad, self.db)
         self.assertEqual(result['identity']['status'], 'advert_self_disclosure')
         self.assertEqual(result['identity']['property_id'], '101')
