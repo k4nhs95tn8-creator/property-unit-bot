@@ -106,13 +106,24 @@ def _regulatory_zone(details):
     return None
 
 
-def _explicit_unit_disclosure(text):
-    """Return an explicitly labelled unit from the advert body, never from URLs."""
+def _explicit_unit_disclosures(text):
+    """Extract only clearly labelled, independently attributable advert text.
+
+    If different unit numbers are disclosed, don't guess which one is true.
+    A label in an advert remains self-disclosure rather than DLD verification.
+    """
     if not isinstance(text, str):
-        return None
-    m = re.search(r'(?im)(?:^|[\n;•])\s*(?:unit\s*(?:no\.?|number)|'
-                  r'apartment\s*(?:no\.?|number))\s*[:#-]\s*([A-Za-z0-9/-]{1,20})(?=$|[\s;,.)])', text)
-    return m.group(1) if m else None
+        return []
+    pattern = (r'(?im)(?:^|[\\n;•])\\s*(?:unit\\s*(?:no\\.?|number)|'
+               r'apartment\\s*(?:no\\.?|number)|flat\\s*(?:no\\.?|number))'
+               r'\\s*[:#-]\\s*([A-Za-z0-9/-]{1,20})(?=$|[\\s;,.)])')
+    hits = re.findall(pattern, text)
+    return list(dict.fromkeys(hits))
+
+
+def _explicit_unit_disclosure(text):
+    units = _explicit_unit_disclosures(text)
+    return units[0] if len({norm(u) for u in units}) == 1 else None
 
 
 def _description_area(text):
