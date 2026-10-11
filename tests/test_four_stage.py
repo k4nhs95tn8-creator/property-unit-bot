@@ -130,6 +130,21 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(result['identity']['status'], 'not_established')
         self.assertEqual(result['final_status'], 'unresolved')
 
+    def test_marketing_area_does_not_exclude_registry_units(self):
+        cap = advert()
+        cap['extracted_property_data']['regulatory_details'] = []
+        cap['extracted_property_data']['area'] = 'Dubai Marina'
+        result = f.analyze(cap, self.db)
+        self.assertEqual(result['registry']['count'], 3)
+        self.assertEqual(result['registry']['area_filter'], 'not_applied_advert_and_dld_zone_names_can_differ')
+        self.assertEqual(result['identity']['status'], 'not_established')
+
+    def test_permit_wrong_registered_zone_fails_closed(self):
+        p = permit(unit='1001')
+        p['property_records'][0]['property_record']['ZoneNameEn'] = 'Different Registered Zone'
+        result = f.analyze(advert(), self.db, permit_payload=p)
+        self.assertEqual(result['identity']['status'], 'not_established')
+
     def test_one_candidate_is_still_not_verified(self):
         with sqlite3.connect(self.db) as db:
             db.execute("DELETE FROM units WHERE property_id <> '101'")
