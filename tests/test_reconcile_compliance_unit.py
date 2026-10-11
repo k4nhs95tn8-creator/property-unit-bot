@@ -9,7 +9,9 @@ from reconcile_compliance_unit import reconcile_unit
 def evidence():
     return {'status':'source_reported_unit', 'unit_number':'A-901',
             'upstream_property_id':'900001', 'reference':'synthetic-reference',
-            'upstream_namespace':'pf_compliance_property_id_unproven_dld_equivalence'}
+            'upstream_namespace':'pf_compliance_property_id_unproven_dld_equivalence',
+            'listing_guid':'a'*49, 'source_authenticity':'operator_attested_not_independently_authenticated',
+            'captured_at':'2026-10-11T12:00:00+00:00', 'permit_number':'157461', 'license_number':'1425589'}
 
 class RegistryReconciliationTests(unittest.TestCase):
     def setUp(self):
@@ -28,7 +30,8 @@ class RegistryReconciliationTests(unittest.TestCase):
 
     def lookup(self,e=None,building='Test Tower A',area='Reg Zone'):
         return reconcile_unit(e or evidence(),self.db,
-                   registered_building=building,registered_zone=area)
+                   registered_building=building,registered_zone=area,
+                   expected_listing_guid='a'*49)
 
     def test_compatible_registry_source_claim(self):
         r=self.lookup()
@@ -61,6 +64,23 @@ class RegistryReconciliationTests(unittest.TestCase):
         e=evidence()
         e['status']='missing_advert_guid'
         self.assertEqual(self.lookup(e)['status'],'invalid_or_unlinked_source_evidence')
+
+    def test_refuses_guid_collision(self):
+        e=evidence()
+        e['listing_guid']='b'*49
+        self.assertEqual(self.lookup(e)['status'],'listing_guid_conflict')
+
+    def test_refuses_globally_reused_property_id(self):
+        with sqlite3.connect(self.db) as db:
+            self.add(db,'10001','B-902','Test Tower B')
+        self.assertEqual(self.lookup()['status'],'canonical_property_id_collision')
+
+    def test_refuses_column_record_id_conflict(self):
+        with sqlite3.connect(self.db) as db:
+            db.execute("UPDATE units SET record=? WHERE property_id='10001'",
+                (json.dumps({'unit':'A-901','property_id':'98765',
+                    'building':'Test Tower A','area':'Reg Zone'}),))
+        self.assertEqual(self.lookup()['status'],'malformed_or_conflicting_registry_record')
 
     def test_absent_registry(self):
         self.db.unlink()
