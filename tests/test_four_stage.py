@@ -144,6 +144,32 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(r['final_status'], 'permit_explicit_unverified')
         self.assertFalse(r['deployment_ready'])
 
+    def test_explicit_property_unit_number_is_preserved_without_decoding(self):
+        p = permit()
+        p['property_records'][0]['property_record']['PropertyUnitNumber'] = '1001'
+        p['property_records'][0]['property_record']['PermitPropertyId'] = '9007788'
+        parsed = f.ingest_permit(p)
+        self.assertEqual(parsed['property_unit_number'], '1001')
+        self.assertEqual(parsed['permit_property_id'], '9007788')
+        self.assertIsNone(parsed['property_id_claim'])
+        result = f.analyze(advert(), self.db, permit_payload=p)
+        self.assertEqual(result['identity']['status'], 'permit_record_claim')
+        self.assertEqual(result['identity']['property_id'], '101')
+        self.assertFalse(result['deployment_ready'])
+
+    def test_conflicting_unit_number_fields_refuse_identity(self):
+        p = permit(unit='1101')
+        p['property_records'][0]['property_record']['PropertyUnitNumber'] = '1001'
+        result = f.analyze(advert(), self.db, permit_payload=p)
+        self.assertEqual(result['identity']['status'], 'not_established')
+
+    def test_empty_property_unit_number_does_not_invent_unit(self):
+        p = permit()
+        p['property_records'][0]['property_record']['PropertyUnitNumber'] = None
+        p['property_records'][0]['property_record']['PermitPropertyId'] = '907711'
+        result = f.analyze(advert(), self.db, permit_payload=p)
+        self.assertEqual(result['identity']['status'], 'not_established')
+
     def test_guid_mismatch_never_joins_permit_to_ad(self):
         r = f.analyze(advert(), self.db, permit_payload=permit(unit='1001', guid='b'*49))
         self.assertEqual(r['permit_check']['status'], 'mismatch')
