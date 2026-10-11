@@ -157,7 +157,13 @@ def run(stop=None):
     stop = stop or threading.Event()
     from release_data import auto_sync
     threading.Thread(target=auto_sync, args=(DATA, stop), daemon=True).start()
-    conversation = Conversation(DATA / 'units.sqlite', DATA / 'listings.json')
+    # Opt-in research pipeline. Off by default; never turns on Telegram itself.
+    # Existing production Conversation is used unless explicitly authorised.
+    if os.environ.get('KUKU_RESEARCH_MODE') == '1':
+        from research_dialog import ResearchConversation
+        conversation = ResearchConversation(DATA / 'units.sqlite', DATA / 'listings.json')
+    else:
+        conversation = Conversation(DATA / 'units.sqlite', DATA / 'listings.json')
     offset = 0
     active_token = None
     last_request = 0
