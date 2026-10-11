@@ -61,6 +61,7 @@ class ResearchConversation:
         self.cache_path = self.listing_path.parent / 'observation-index.sqlite'
         self.owner_store = self.listing_path.parent / 'owners.sqlite'
         self.crosswalk_store = self.listing_path.parent / 'permit-links.sqlite'
+        self.document_store = self.listing_path.parent / 'identity-claims.sqlite'
         self.pending = {}
 
     def _saved(self, url):
@@ -82,6 +83,7 @@ class ResearchConversation:
             result = analyze(session['advert'], self.db_path,
                              permit_payload=session.get('permit'), cache_path=self.cache_path,
                              crosswalk_path=self.crosswalk_store,
+                             document_db=self.document_store,
                              owner_db=self.owner_store,
                              include_owner=(os.environ.get('KUKU_OWNER_LOOKUP') == '1' and
                                             os.environ.get('KUKU_AUTO_OWNER_LOOKUP') == '1'),
