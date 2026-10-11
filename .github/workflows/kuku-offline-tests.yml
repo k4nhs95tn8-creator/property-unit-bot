@@ -3,6 +3,7 @@ on:
   pull_request:
     branches:
       - codex/github-cloud-data
+      - codex/kuku-authorised-evidence-20261011
     paths:
       - '*.py'
       - 'tests/**'
