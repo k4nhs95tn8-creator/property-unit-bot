@@ -19,7 +19,7 @@ import sqlite3
 from contextlib import closing
 
 from permit_links import lookup as lookup_permit_link
-from owner_records import lookup as lookup_owner
+from owner_records import lookup_authorised_contacts
 from identity_evidence import lookup_claim as lookup_document_claim
 from datetime import datetime, timezone
 from html.parser import HTMLParser
@@ -672,10 +672,16 @@ def analyze(ad_payload, db_path, *, permit_payload=None, cache_path=None, crossw
                     document = {'status': 'document_claim_not_unique_in_candidate_scope'}
     dedup = _store_and_correlate(cache_path, advert)
     owner = {'status': 'not_requested_or_no_independent_unit_link'}
-    # A contact record is NOT the current DLD owner. Never auto-join or
-    # disclose a person's contact merely from a provider claim.
+    # A source report does not establish current registered ownership.
+    # Release contacts only with *matching* property-specific owner consent and
+    # an explicitly supplied, corroborated document evidence reference.
     if owner_db and include_owner:
-        owner = {'status': 'current_owner_not_independently_verified'}
+        if identity.get('status') == 'authorised_document_claim':
+            owner = lookup_authorised_contacts(
+                owner_db, identity['property_id'], identity['evidence_reference'],
+                authorised=True)
+        else:
+            owner = {'status': 'current_owner_not_independently_verified'}
     # Only allowlisted aggregate candidate data leaves the engine.
     candidates = registry.pop('candidates', [])
     retained = registry.pop('retained_candidates', [])
@@ -722,11 +728,12 @@ def message(report):
     else:
         lines.append('EXACT UNIT NOT VERIFIED — no independently supported permit-to-property join.')
     owner = report.get('owner', {})
-    if owner.get('status') == 'source_reported_contact':
-        lines.append('AUTHORISATION-LIMITED SOURCE-REPORTED CONTACT (not verified current owner):')
-        lines.append(f"Name: {owner['contact_name']} — {owner['contact_role']}")
-        lines.append(f"Phone: {owner['contact_phone']} — Email: {owner['contact_email']}")
-        lines.append(f"Source: {owner['source_name']}; observed {owner['observed_date']}")
+    if owner.get('status') == 'authorised_source_reported_contacts':
+        lines.append('CONSENTED PROPERTY CONTACTS (NOT verified current title owners):')
+        for contact in owner['contacts'][:10]:
+            lines.append(f"Name: {contact['contact_name']} — {contact['contact_role']}")
+            lines.append(f"Phone: {contact['contact_phone']} — Email: {contact['contact_email']}")
+        lines.append('Owner identity has not been independently verified against current DLD registration.')
     if r['status'] == 'data_unavailable':
         lines.append('Load a permitted local DLD unit snapshot to obtain candidates.')
     return '\n'.join(lines)[:3900]
