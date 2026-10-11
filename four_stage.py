@@ -20,6 +20,7 @@ from contextlib import closing
 
 from permit_links import lookup as lookup_permit_link
 from owner_records import lookup as lookup_owner
+from identity_evidence import lookup_claim as lookup_document_claim
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -613,7 +614,8 @@ def _store_and_correlate(path, ad):
 
 
 def analyze(ad_payload, db_path, *, permit_payload=None, cache_path=None, crosswalk_path=None,
-            owner_db=None, include_owner=False, url=None, max_returned=12):
+            owner_db=None, include_owner=False, url=None, max_returned=12,
+            document_db=None):
     """Return a machine-readable audit, including abstention and candidate ambiguity."""
     advert = ingest_advert(ad_payload, url=url)
     permit = ingest_permit(permit_payload) if permit_payload is not None else None
@@ -630,10 +632,50 @@ def analyze(ad_payload, db_path, *, permit_payload=None, cache_path=None, crossw
         identity = _identity_from_crosswalk(advert, effective_permit, registry, crosswalk_path, db_path)
     if identity['status'] == 'not_established':
         identity = _identity_from_explicit_advert(advert, registry)
+    # A separately authorised listing-specific document may corroborate a
+    # registered unit. Never use this to invent a GUID, property_id or owner.
+    document = {'status': 'not_supplied'}
+    if document_db and advert.get('permit_guid') and registry['status'] == 'candidates_only':
+        document = lookup_document_claim(advert['url'], document_db, db_path)
+        if document.get('status') == 'document_claim_registry_corroborated':
+            claimed_guid = document.get('listing_guid')
+            conflicts = (
+                claimed_guid != advert['permit_guid']
+                or (permit_payload is not None and connection['status'] != 'guid_correlated')
+                or (effective_permit and effective_permit.get('property_unit_number')
+                    and norm(effective_permit['property_unit_number']) != norm(document['unit_number']))
+                or (effective_permit and effective_permit.get('property_number')
+                    and norm(effective_permit['property_number']) != norm(document['unit_number']))
+                or (effective_permit and effective_permit.get('property_id_claim')
+                    and str(effective_permit['property_id_claim']) != str(document['dld_property_id']))
+                or (advert.get('building') and norm(advert['building']) != norm(document['building']))
+                or (advert.get('area') and norm(advert['area']) != norm(document['area']))
+            )
+            if conflicts:
+                document = {'status': 'document_claim_conflicts_with_advert_or_permit'}
+            else:
+                rows = [r for r in registry.get('retained_candidates', registry['candidates'])
+                        if str(r.get('property_id')) == str(document['dld_property_id'])
+                        and norm(r.get('unit')) == norm(document['unit_number'])]
+                if len(rows) == 1 and _registry_id_unambiguous(db_path,
+                        document['dld_property_id'], document['unit_number']):
+                    identity = {
+                        'status': 'authorised_document_claim',
+                        'unit': document['unit_number'],
+                        'property_id': document['dld_property_id'],
+                        'evidence_source': document['evidence_type'],
+                        'evidence_reference': document['evidence_reference'],
+                        'observed_date': document['observed_date'],
+                        'warning': 'Local authorised document claim agrees with the registry, not independent verification of current ownership.'
+                    }
+                else:
+                    document = {'status': 'document_claim_not_unique_in_candidate_scope'}
     dedup = _store_and_correlate(cache_path, advert)
     owner = {'status': 'not_requested_or_no_independent_unit_link'}
-    if owner_db and include_owner and identity.get('status') == 'external_crosswalk_claim':
-        owner = lookup_owner(owner_db, identity['property_id'], authorised=True)
+    # A contact record is NOT the current DLD owner. Never auto-join or
+    # disclose a person's contact merely from a provider claim.
+    if owner_db and include_owner:
+        owner = {'status': 'current_owner_not_independently_verified'}
     # Only allowlisted aggregate candidate data leaves the engine.
     candidates = registry.pop('candidates', [])
     retained = registry.pop('retained_candidates', [])
@@ -650,9 +692,10 @@ def analyze(ad_payload, db_path, *, permit_payload=None, cache_path=None, crossw
     registry['top_candidates_note'] = 'Rankings show descriptor similarity, NOT identification confidence or probabilities.'
     return {'schema_version': 1, 'advert': _compact_profile(advert),
             'permit_check': connection, 'permit': permit,
-            'registry': registry, 'identity': identity, 'dedup': dedup, 'owner': owner,
+            'registry': registry, 'identity': identity, 'document': document, 'dedup': dedup, 'owner': owner,
             'final_status': {'permit_record_claim': 'permit_explicit_unverified',
                              'external_crosswalk_claim': 'crosswalk_source_claim',
+                             'authorised_document_claim': 'document_source_claim',
                              'advert_self_disclosure': 'advert_self_disclosure_unverified'}.get(identity['status'], 'unresolved'),
             'deployment_ready': False}
 
@@ -672,7 +715,7 @@ def message(report):
             "These are NOT independently identified units.")
     if p['discrepancies']:
         lines.append('Permit checks: ' + '; '.join(p['discrepancies']))
-    if i['status'] in {'permit_record_claim', 'external_crosswalk_claim', 'advert_self_disclosure'}:
+    if i['status'] in {'permit_record_claim', 'external_crosswalk_claim', 'advert_self_disclosure', 'authorised_document_claim'}:
         lines.append(f"Source-reported unit {i['unit']} (registry ID {i['property_id']}); not independently authenticated.")
         if i.get('evidence_source'):
             lines.append(f"Recorded source: {i['evidence_source']} ({i['evidence_reference']}).")
