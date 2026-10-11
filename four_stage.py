@@ -512,12 +512,32 @@ def _registry_id_unambiguous(db_path, property_id, unit):
                                  (str(property_id),)).fetchall()
         if not entries or len(entries) >= 100:
             return False
-        identities = {(norm(json.loads(r[0]).get('unit')),
-                       norm(json.loads(r[0]).get('project') or json.loads(r[0]).get('building')),
-                       norm(json.loads(r[0]).get('area'))) for r in entries}
+        identities = {
+            (norm(row.get('unit')), norm(row.get('building')),
+             norm(row.get('project')), norm(row.get('area')),
+             norm(row.get('land_number')), norm(row.get('land_sub_number')),
+             norm(row.get('building_number')))
+            for row in (json.loads(r[0]) for r in entries)
+        }
         return len(identities) == 1 and next(iter(identities))[0] == norm(unit)
     except (sqlite3.Error, ValueError, TypeError):
         return False
+
+
+def _registered_tower_agrees(record, *, advertised=None, permitted=None):
+    """Registered tower identity, not just a shared development/project, is required.
+
+    An unlabelled project-only unit row can still be a candidate, but it cannot
+    establish which tower/unit an advert represents even with the same area.
+    """
+    tower = norm(record.get('building'))
+    if not tower:
+        return False
+    if advertised and norm(advertised) != tower:
+        return False
+    if permitted and norm(permitted) != tower:
+        return False
+    return bool(advertised or permitted)
 
 
 def _identity_from_explicit_advert(ad, registry):
@@ -529,6 +549,8 @@ def _identity_from_explicit_advert(ad, registry):
     if len(matched) != 1:
         return {'status': 'not_established', 'reason': 'Advert disclosure not unique in registry candidate scope.'}
     row = matched[0]
+    if not _registered_tower_agrees(row, advertised=ad.get('building')):
+        return {'status': 'not_established', 'reason': 'Only project-level scope; registered tower is unverified.'}
     return {'status': 'advert_self_disclosure', 'unit': row.get('unit'),
             'property_id': row.get('property_id'), 'source': 'advert_description',
             'warning': 'The advertiser disclosed a unit number; Kuku has not authenticated the underlying property link.'}
@@ -551,6 +573,9 @@ def _identity_from_crosswalk(ad, permit, registry, crosswalk_path, db_path):
     if len(compatible) != 1:
         return {'status': 'not_established', 'reason': 'Crosswalk does not identify one compatible registry record.'}
     row = compatible[0]
+    if not _registered_tower_agrees(row, advertised=ad.get('building'),
+                                    permitted=permit.get('building') if permit else None):
+        return {'status': 'not_established', 'reason': 'Registered tower is missing or conflicts with advert or permit.'}
     if permit and permit.get('area') and row.get('area') and norm(row['area']) != norm(permit['area']):
         return {'status': 'not_established', 'reason': 'Permit registered zone conflicts with selected DLD unit.'}
     if not _registry_id_unambiguous(db_path, link['property_id'], row.get('unit')):
@@ -570,7 +595,7 @@ def _identity_from_crosswalk(ad, permit, registry, crosswalk_path, db_path):
             'warning': 'Matching authorized external source claim; origin not independently authenticated by this tool.'}
 
 
-def _identity_from_permit(permit, correlation, registry, db_path):
+def _identity_from_permit(permit, correlation, registry, db_path, advert=None):
     """Only an explicit permit field can identify a unit; no score-based promotion."""
     if not permit or correlation != 'guid_correlated' or registry['status'] != 'candidates_only':
         return {'status': 'not_established'}
@@ -589,9 +614,13 @@ def _identity_from_permit(permit, correlation, registry, db_path):
     if len(matching) != 1:
         return {'status': 'not_established', 'reason': 'Permit property number does not match a unique compatible registry row.'}
     row = matching[0]
+    if not _registered_tower_agrees(row,
+                                    advertised=(advert or {}).get('building'),
+                                    permitted=permit.get('building')):
+        return {'status': 'not_established', 'reason': 'No independently matching registered tower.'}
     if permit.get('area') and row.get('area') and norm(row['area']) != norm(permit['area']):
         return {'status': 'not_established', 'reason': 'Permit zone conflicts with registered DLD unit.'}
-    if pid and not _registry_id_unambiguous(db_path, pid, row.get('unit')):
+    if not _registry_id_unambiguous(db_path, row.get('property_id'), row.get('unit')):
         return {'status': 'not_established', 'reason': 'Permit property ID not unique in registry.'}
     if permit.get('floor') and str(row.get('floor', '')) != str(permit['floor']):
         return {'status': 'not_established', 'reason': 'Permit floor conflicts with registry row.'}
@@ -643,7 +672,7 @@ def analyze(ad_payload, db_path, *, permit_payload=None, cache_path=None, crossw
     if permit_payload is not None and connection['status'] != 'guid_correlated':
         crosswalk_path = None
     registry = _registry_records(db_path, advert, effective_permit, connection['status'])
-    identity = _identity_from_permit(effective_permit, connection['status'], registry, db_path)
+    identity = _identity_from_permit(effective_permit, connection['status'], registry, db_path, advert)
     # Crosswalk claims and advert self-disclosures never become independently verified
     # solely because the selected registry row is unique.
     if identity['status'] == 'not_established':
