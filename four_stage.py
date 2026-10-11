@@ -114,9 +114,9 @@ def _explicit_unit_disclosures(text):
     """
     if not isinstance(text, str):
         return []
-    pattern = (r'(?im)(?:^|[\\n;•])\\s*(?:unit\\s*(?:no\\.?|number)|'
-               r'apartment\\s*(?:no\\.?|number)|flat\\s*(?:no\\.?|number))'
-               r'\\s*[:#-]\\s*([A-Za-z0-9/-]{1,20})(?=$|[\\s;,.)])')
+    pattern = (r'(?im)(?:^|[\n;•])\s*(?:unit\s*(?:no\.?|number)|'
+               r'apartment\s*(?:no\.?|number)|flat\s*(?:no\.?|number))'
+               r'\s*[:#-]\s*([A-Za-z0-9/-]{1,20})(?=$|[\s;,.)])')
     hits = re.findall(pattern, text)
     return list(dict.fromkeys(hits))
 
