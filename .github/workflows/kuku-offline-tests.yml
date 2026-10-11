@@ -1,0 +1,36 @@
+name: Kuku offline safety tests
+on:
+  pull_request:
+    branches:
+      - codex/github-cloud-data
+    paths:
+      - '*.py'
+      - 'tests/**'
+      - '.github/workflows/kuku-offline-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-tests:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout development changes without credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Use Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run offline synthetic checks without any real API, Telegram or owner data
+        env:
+          KUKU_RESEARCH_MODE: '0'
+          KUKU_OWNER_LOOKUP: '0'
+          KUKU_AUTO_OWNER_LOOKUP: '0'
+          KUKU_FETCH_PUBLIC: '0'
+          TELEGRAM_BOT_TOKEN: ''
+        run: python -m unittest discover -s tests -v
