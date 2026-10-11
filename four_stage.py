@@ -545,7 +545,9 @@ def _identity_from_explicit_advert(ad, registry):
     unit = ad.get('unit_disclosure')
     if not unit or registry['status'] != 'candidates_only':
         return {'status': 'not_established'}
-    matched = [row for row in registry.get('retained_candidates', registry['candidates']) if norm(row.get('unit')) == norm(unit)]
+    matched = [row for row in registry.get('retained_candidates', registry['candidates']) if
+               norm(row.get('unit')) == norm(unit) and
+               _registered_tower_agrees(row, advertised=ad.get('building'))]
     if len(matched) != 1:
         return {'status': 'not_established', 'reason': 'Advert disclosure not unique in registry candidate scope.'}
     row = matched[0]
