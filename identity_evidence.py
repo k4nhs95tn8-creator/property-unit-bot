@@ -16,7 +16,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 GUID = re.compile(r'^[a-z0-9]{49}$')
-IDENTIFIER = re.compile(r'^[0-9]{1,20}
+IDENTIFIER = re.compile(r'^[0-9]{1,20}$')
 UNIT = re.compile(r'^[A-Za-z0-9][A-Za-z0-9 /_-]{0,29}$')
 FIELDS = ('listing_url', 'listing_guid', 'property_id', 'unit_number', 'building',
           'area', 'land_number', 'evidence_type', 'evidence_reference',
