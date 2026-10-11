@@ -251,6 +251,46 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(report['final_status'], 'document_source_claim')
         self.assertFalse(report['deployment_ready'])
 
+    def test_joint_owner_contacts_require_matching_consent_reference(self):
+        import csv
+        from identity_evidence import FIELDS as EFIELDS, import_claims
+        from owner_records import COLUMN_SET, import_records
+        evidence = self.root / 'identity-claims.sqlite'
+        efile = self.root / 'identity-claims.csv'
+        with efile.open('w', newline='') as handle:
+            writer = csv.DictWriter(handle, fieldnames=EFIELDS)
+            writer.writeheader()
+            writer.writerow(dict(listing_url=URL, listing_guid=GUID, property_id='101',
+                unit_number='1001', building='Demo Tower',
+                area='Al Barsha South Fifth', land_number='',
+                evidence_type='signed_listing_mandate',
+                evidence_reference='owner-consent-123',
+                observed_date='2026-10-10', authorised_for_lookup='yes'))
+        import_claims(efile, evidence)
+        contacts = self.root / 'owners.sqlite'
+        cfile = self.root / 'contacts.csv'
+        with cfile.open('w', newline='') as handle:
+            writer = csv.DictWriter(handle, fieldnames=sorted(COLUMN_SET))
+            writer.writeheader()
+            for name in ('Coowner A', 'Coowner B'):
+                writer.writerow(dict(property_id='101', contact_name=name,
+                    contact_phone='', contact_email=name.lower().replace(' ', '')+'@example.test',
+                    contact_role='registered_owner_claim', source_name='owner_direct',
+                    source_reference='owner-consent-123', observed_date='2026-10-10',
+                    use_basis='owner_consent', authorised_for_lookup='yes'))
+        import_records(cfile, contacts)
+        report = f.analyze(advert(), self.db, permit_payload=permit(), document_db=evidence,
+                           owner_db=contacts, include_owner=True)
+        self.assertEqual(report['identity']['status'], 'authorised_document_claim')
+        self.assertEqual(report['owner']['status'], 'authorised_source_reported_contacts')
+        self.assertEqual(len(report['owner']['contacts']), 2)
+        self.assertEqual(report['owner']['ownership_status'], 'not_independently_verified_current_owner')
+
+    def test_crosswalk_alone_cannot_release_owner_contact(self):
+        report = f.analyze(advert(), self.db, permit_payload=permit(),
+                           owner_db=self.root / 'none.sqlite', include_owner=True)
+        self.assertEqual(report['owner']['status'], 'current_owner_not_independently_verified')
+
     def test_wrong_guid_cannot_upgrade_document_claim(self):
         import csv
         from identity_evidence import FIELDS, import_claims
