@@ -441,25 +441,40 @@ def _registry_records(db_path, ad, permit, permit_correlation):
     # Deduplicate identical database rows while retaining genuinely different records.
     records = list({json.dumps(r, sort_keys=True): r for r in rows}.values())
     scope = 'project_may_span_buildings' if not building or any(not r.get('building') or norm(r.get('building')) != building for r in records) else 'building'
+    # Area is a mutable descriptor, not an identity key. DLD snapshots, permit
+    # cards and adverts can legitimately disagree (e.g., net versus inclusive
+    # area). Retain bedroom-compatible records as possible rivals; only mark
+    # close-area matches as the primary ranked candidates.
     candidates = []
+    retained_candidates = []
+    area_discrepancy_count = 0
     for row in records:
         if ad.get('bedrooms') is not None and row.get('bedrooms') is not None:
             if bedroom_count(row['bedrooms']) != ad['bedrooms']:
                 continue
         actual = number(row.get('size_sqm'))
-        if ad.get('size_sqm') and actual:
-            if abs(actual - ad['size_sqm']) > max(1.0, ad['size_sqm'] * .02):
-                continue
+        area_discrepancy = bool(ad.get('size_sqm') and actual and
+                                abs(actual - ad['size_sqm']) > max(1.0, ad['size_sqm'] * .02))
         score = 0
         score += 5 if building and norm(row.get('building')) == building else 0
         score += 3 if area and norm(row.get('area')) == area else 0
         score += 2 if ad.get('bedrooms') is not None and row.get('bedrooms') is not None else 0
         if actual and ad.get('size_sqm'):
             score += round(max(0.0, 2.0 - abs(actual - ad['size_sqm'])), 4)
-        candidates.append(dict(row, diagnostic_score=score))
-    candidates.sort(key=lambda x: (-x['diagnostic_score'], str(x.get('unit') or ''), str(x.get('property_id') or '')))
-    return {'status': 'candidates_only' if candidates else 'no_compatible_rows', 'candidates': candidates,
-            'count': len(candidates), 'scope': scope, 'records_examined': len(records), 'snapshot': {
+        candidate = dict(row, diagnostic_score=score, area_discrepancy=area_discrepancy)
+        retained_candidates.append(candidate)
+        if area_discrepancy:
+            area_discrepancy_count += 1
+        else:
+            candidates.append(candidate)
+    sort_key = lambda x: (-x['diagnostic_score'], str(x.get('unit') or ''), str(x.get('property_id') or ''))
+    candidates.sort(key=sort_key)
+    retained_candidates.sort(key=sort_key)
+    return {'status': 'candidates_only' if retained_candidates else 'no_compatible_rows',
+            'candidates': candidates, 'retained_candidates': retained_candidates,
+            'count': len(candidates), 'retained_count': len(retained_candidates),
+            'area_discrepancy_count': area_discrepancy_count,
+            'scope': scope, 'records_examined': len(records), 'snapshot': {
                 'source': snapshot.get('source'), 'as_of': snapshot.get('as_of'), 'rows': snapshot.get('rows'),
                 'coverage': snapshot.get('coverage')}}
 
@@ -488,7 +503,7 @@ def _identity_from_explicit_advert(ad, registry):
     unit = ad.get('unit_disclosure')
     if not unit or registry['status'] != 'candidates_only':
         return {'status': 'not_established'}
-    matched = [row for row in registry['candidates'] if norm(row.get('unit')) == norm(unit)]
+    matched = [row for row in registry.get('retained_candidates', registry['candidates']) if norm(row.get('unit')) == norm(unit)]
     if len(matched) != 1:
         return {'status': 'not_established', 'reason': 'Advert disclosure not unique in registry candidate scope.'}
     row = matched[0]
@@ -508,7 +523,7 @@ def _identity_from_crosswalk(ad, permit, registry, crosswalk_path, db_path):
             return {'status': 'not_established', 'reason': 'Crosswalk transaction conflicts with the captured permit.'}
     if ad.get('building') and norm(link['building']) != norm(ad['building']):
         return {'status': 'not_established', 'reason': 'Crosswalk building conflicts with the advert.'}
-    compatible = [row for row in registry['candidates'] if
+    compatible = [row for row in registry.get('retained_candidates', registry['candidates']) if
                   str(row.get('property_id')) == link['property_id'] and
                   norm(row.get('unit')) == norm(link['unit_number'])]
     if len(compatible) != 1:
@@ -533,7 +548,7 @@ def _identity_from_permit(permit, correlation, registry, db_path):
     unit, pid = permit.get('property_number'), permit.get('property_id_claim')
     if not unit and not pid:
         return {'status': 'not_established'}
-    matching = [r for r in registry['candidates'] if
+    matching = [r for r in registry.get('retained_candidates', registry['candidates']) if
                 (not unit or norm(r.get('unit')) == norm(unit)) and
                 (not pid or str(r.get('property_id')) == str(pid))]
     if len(matching) != 1:
@@ -603,6 +618,13 @@ def analyze(ad_payload, db_path, *, permit_payload=None, cache_path=None, crossw
         owner = lookup_owner(owner_db, identity['property_id'], authorised=True)
     # Only allowlisted aggregate candidate data leaves the engine.
     candidates = registry.pop('candidates', [])
+    retained = registry.pop('retained_candidates', [])
+    # Preserve records eliminated only by a conflicting area measurement.
+    # These are explicitly NOT verified units or high-confidence predictions.
+    registry['top_retained_area_alternatives'] = [
+        {k: item[k] for k in ('unit', 'property_id', 'floor', 'size_sqm', 'bedrooms', 'diagnostic_score', 'area_discrepancy') if k in item}
+        for item in retained if item.get('area_discrepancy')
+    ][:max_returned]
     registry['top_candidates'] = [
         {k: item[k] for k in ('unit', 'property_id', 'floor', 'size_sqm', 'bedrooms', 'diagnostic_score') if k in item}
         for item in candidates[:max_returned]
@@ -625,6 +647,11 @@ def message(report):
              f"Stage 2 — {r['status']}; compatible registry rows: {r.get('count', 'unavailable')}; scope: {r.get('scope')}",
              f"Stage 3 — permit: {p['status']}",
              f"Stage 4 — {len(dedup['same_permit'])} same-GUID adverts; {len(dedup['possible_relists'])} possible relists (not verified)"]
+    if r.get('area_discrepancy_count'):
+        lines.append(
+            f"Area discrepancy: {r['area_discrepancy_count']} registered-unit rivals were retained "
+            f"despite area differences; retained rivals: {r.get('retained_count', 0)}. "
+            "These are NOT independently identified units.")
     if p['discrepancies']:
         lines.append('Permit checks: ' + '; '.join(p['discrepancies']))
     if i['status'] in {'permit_record_claim', 'external_crosswalk_claim', 'advert_self_disclosure'}:
