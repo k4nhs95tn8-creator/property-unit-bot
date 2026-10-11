@@ -52,7 +52,7 @@ class PipelineTests(unittest.TestCase):
             db.execute('INSERT INTO metadata VALUES (?)', (json.dumps({'source': 'synthetic', 'as_of': None, 'rows': 3}),))
             db.execute('CREATE TABLE units(area TEXT, building TEXT, property_id TEXT, record TEXT, project TEXT)')
             for property_id, unit, size, bedrooms in [(101, '1001', 100, 2), (102, '1101', 100, 2), (103, '1201', 99.4, 2)]:
-                record = {'area': 'Al Barsha South Fifth', 'project': 'Demo Tower', 'unit': unit,
+                record = {'area': 'Al Barsha South Fifth', 'project': 'Demo Tower', 'building': 'Demo Tower', 'unit': unit,
                     'property_id': str(property_id), 'floor': unit[:2], 'bedrooms': bedrooms, 'size_sqm': size}
                 db.execute('INSERT INTO units VALUES (?,?,?,?,?)', (f.norm(record['area']), '', str(property_id), json.dumps(record), f.norm(record['project'])))
 
@@ -78,7 +78,14 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn('private@example.com', json.dumps(p))
 
     def test_project_only_registry_cannot_certify_source_claimed_unit(self):
-        # The baseline fixture has project but no registered building.
+        # An explicit permit unit alone cannot identify a tower when
+        # the DLD source contains only a broad development/project.
+        with sqlite3.connect(self.db) as db:
+            for pid, raw in db.execute('SELECT property_id,record FROM units').fetchall():
+                record = json.loads(raw)
+                record.pop('building', None)
+                db.execute('UPDATE units SET record=? WHERE property_id=?',
+                           (json.dumps(record), pid))
         result = f.analyze(advert(), self.db, permit_payload=permit(unit='1001'))
         self.assertEqual(result['identity']['status'], 'not_established')
         self.assertEqual(result['final_status'], 'unresolved')
