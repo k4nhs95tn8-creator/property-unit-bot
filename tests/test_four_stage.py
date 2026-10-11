@@ -247,7 +247,7 @@ class PipelineTests(unittest.TestCase):
                            include_owner=True)
         self.assertEqual(report['identity']['status'], 'authorised_document_claim')
         self.assertEqual(report['identity']['unit'], '1001')
-        self.assertEqual(report['owner']['status'], 'current_owner_not_independently_verified')
+        self.assertEqual(report['owner']['status'], 'no_authorised_owner_dataset')
         self.assertEqual(report['final_status'], 'document_source_claim')
         self.assertFalse(report['deployment_ready'])
 
