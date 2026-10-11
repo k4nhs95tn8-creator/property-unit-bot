@@ -226,6 +226,50 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(r['permit_guid'], GUID)
         self.assertEqual(r['portal'], 'propertyfinder')
 
+    def test_authorised_document_link_is_source_claim_not_owner(self):
+        import csv
+        from identity_evidence import FIELDS, import_claims
+        claim_db = self.root / 'claims.sqlite'
+        src = self.root / 'claims.csv'
+        with src.open('w', newline='') as handle:
+            writer = csv.DictWriter(handle, fieldnames=FIELDS)
+            writer.writeheader()
+            writer.writerow(dict(listing_url=URL, listing_guid=GUID, property_id='101',
+                unit_number='1001', building='Demo Tower',
+                area='Al Barsha South Fifth', land_number='',
+                evidence_type='signed_listing_mandate',
+                evidence_reference='agency-approval-123',
+                observed_date='2026-10-10', authorised_for_lookup='yes'))
+        import_claims(src, claim_db)
+        # The fixture registry stores building scope as a project, not a tower.
+        report = f.analyze(advert(), self.db, permit_payload=permit(),
+                           document_db=claim_db, owner_db=self.root / 'owners.sqlite',
+                           include_owner=True)
+        self.assertEqual(report['identity']['status'], 'authorised_document_claim')
+        self.assertEqual(report['identity']['unit'], '1001')
+        self.assertEqual(report['owner']['status'], 'current_owner_not_independently_verified')
+        self.assertEqual(report['final_status'], 'document_source_claim')
+        self.assertFalse(report['deployment_ready'])
+
+    def test_wrong_guid_cannot_upgrade_document_claim(self):
+        import csv
+        from identity_evidence import FIELDS, import_claims
+        claim_db = self.root / 'claims.sqlite'
+        src = self.root / 'claims.csv'
+        with src.open('w', newline='') as handle:
+            writer = csv.DictWriter(handle, fieldnames=FIELDS)
+            writer.writeheader()
+            writer.writerow(dict(listing_url=URL, listing_guid='b'*49, property_id='101',
+                unit_number='1001', building='Demo Tower',
+                area='Al Barsha South Fifth', land_number='',
+                evidence_type='signed_listing_mandate',
+                evidence_reference='agency-approval-123',
+                observed_date='2026-10-10', authorised_for_lookup='yes'))
+        import_claims(src, claim_db)
+        result = f.analyze(advert(), self.db, permit_payload=permit(), document_db=claim_db)
+        self.assertEqual(result['identity']['status'], 'not_established')
+        self.assertEqual(result['document']['status'], 'document_claim_conflicts_with_advert_or_permit')
+
     def test_no_public_network_from_default_research(self):
         with patch.object(f, 'fetch_public_listing', side_effect=AssertionError('network attempted')):
             f.analyze(advert(), self.db, permit_payload=permit())
