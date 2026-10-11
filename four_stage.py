@@ -334,6 +334,7 @@ def ingest_permit(payload):
         # proof of authenticated upstream origin.
         if payload.get('source') == 'user_supplied_trakheesi_capture' and 'transaction_number' in payload:
             keys = ('guid', 'transaction_number', 'listing_number', 'property_number',
+                    'property_unit_number', 'permit_property_id',
                     'property_id_claim', 'floor', 'building', 'area', 'bedrooms',
                     'size_sqm', 'asking_aed', 'licence', 'source')
             return {k: payload[k] for k in keys if k in payload}
@@ -352,6 +353,10 @@ def ingest_permit(payload):
             'transaction_number': str(get('PermitNumber')) if get('PermitNumber') not in (None, '') else None,
             'listing_number': str(get('ListingNumber')) if get('ListingNumber') not in (None, '') else None,
             'property_number': str(get('PropertyNumber')) if get('PropertyNumber') not in (None, '') else None,
+            # These identifiers inhabit different namespaces. PermitPropertyId
+            # is NOT a canonical DLD property_id merely because it is numeric.
+            'property_unit_number': str(get('PropertyUnitNumber')) if get('PropertyUnitNumber') not in (None, '') else None,
+            'permit_property_id': str(get('PermitPropertyId') or get('PermitPropertyID')) if (get('PermitPropertyId') or get('PermitPropertyID')) not in (None, '', -1, '-1', 0, '0') else None,
             'property_id_claim': str(get('PropertyId')) if get('PropertyId') not in (None, -1, '-1', '', 0) else None,
             'floor': str(get('FloorNumber')) if get('FloorNumber') not in (None, '') else None,
             'building': get('BuildingNameEn') or get('PropertyNameEn'),
@@ -368,6 +373,8 @@ def ingest_permit(payload):
             'transaction_number': _permit_field(text, 'Transaction Number', r'(\d{3,12})'),
             'listing_number': _permit_field(text, 'Listing Number', r'(\d{5,16})'),
             'property_number': _permit_field(text, 'Property Number', r'([A-Za-z0-9-]{1,25})'),
+            'property_unit_number': _permit_field(text, 'Property Unit Number', r'([A-Za-z0-9/-]{1,25})'),
+            'permit_property_id': _permit_field(text, 'Permit Property ID', r'([0-9]{1,20})'),
             'property_id_claim': None,
             'floor': _permit_field(text, 'Floor Number', r'(\d{1,3})'),
             'building': _permit_field(text, 'Building Name'),
@@ -531,8 +538,13 @@ def _identity_from_crosswalk(ad, permit, registry, crosswalk_path, db_path):
     row = compatible[0]
     if not _registry_id_unambiguous(db_path, link['property_id'], row.get('unit')):
         return {'status': 'not_established', 'reason': 'DLD property ID is ambiguous in the snapshot.'}
-    if permit and permit.get('property_number') and norm(permit['property_number']) != norm(row.get('unit')):
-        return {'status': 'not_established', 'reason': 'Crosswalk contradicts explicit permit unit number.'}
+    if permit:
+        direct_unit = permit.get('property_unit_number')
+        legacy_number = permit.get('property_number')
+        if direct_unit and legacy_number and norm(direct_unit) != norm(legacy_number):
+            return {'status': 'not_established', 'reason': 'Permit fields disagree or have different property-number namespaces.'}
+        if (direct_unit or legacy_number) and norm(direct_unit or legacy_number) != norm(row.get('unit')):
+            return {'status': 'not_established', 'reason': 'Crosswalk contradicts explicit permit unit number.'}
     if permit and permit.get('property_id_claim') and permit['property_id_claim'] != link['property_id']:
         return {'status': 'not_established', 'reason': 'Crosswalk contradicts explicit permit property ID.'}
     return {'status': 'external_crosswalk_claim', 'unit': row.get('unit'),
@@ -545,7 +557,13 @@ def _identity_from_permit(permit, correlation, registry, db_path):
     """Only an explicit permit field can identify a unit; no score-based promotion."""
     if not permit or correlation != 'guid_correlated' or registry['status'] != 'candidates_only':
         return {'status': 'not_established'}
-    unit, pid = permit.get('property_number'), permit.get('property_id_claim')
+    direct_unit = permit.get('property_unit_number')
+    legacy_number = permit.get('property_number')
+    # A conflict is not evidence that the fields are interchangeable. Abstain
+    # until their namespace semantics are independently established.
+    if direct_unit and legacy_number and norm(direct_unit) != norm(legacy_number):
+        return {'status': 'not_established', 'reason': 'Different permit property-number namespaces; unit not proven.'}
+    unit, pid = direct_unit or legacy_number, permit.get('property_id_claim')
     if not unit and not pid:
         return {'status': 'not_established'}
     matching = [r for r in registry.get('retained_candidates', registry['candidates']) if
